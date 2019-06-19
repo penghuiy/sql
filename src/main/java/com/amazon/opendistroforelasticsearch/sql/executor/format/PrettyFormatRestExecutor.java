@@ -67,6 +67,7 @@ public class PrettyFormatRestExecutor implements RestExecutor {
             // TODO Might require some refactoring, Exceptions that happen in RestSqAction code before invoking execution
             // TODO are being caught in RestController (line 242) and being sent as a bytesRestResponse
             // ex. "SELECT * FROM WHERE balance > 30000", results in ParserException and ErrorMessage is never made
+            e.printStackTrace();
             protocol = new Protocol(e);
         }
 

@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+
 import static org.elasticsearch.action.admin.indices.mapping.get.GetFieldMappingsResponse.FieldMappingMetaData;
 
 public class SelectResultSet extends ResultSet {
@@ -403,12 +404,12 @@ public class SelectResultSet extends ResultSet {
         if (fieldPath.length < 2) {
             fieldMapping = (Map<String, Object>) source.get(fieldName);
         } else {
-            fieldMapping = (Map<String, Object>) source.get(fieldPath[1]);
+            //fieldMapping = (Map<String, Object>) source.get(fieldPath[1]);
+            fieldMapping = (Map<String, Object>) source.get(fieldPath[fieldPath.length-1]);
         }
-
-        for (int i = 2; i < fieldPath.length; i++) {
+        /*for (int i = 2; i < fieldPath.length; i++) {
             fieldMapping = (Map<String, Object>) fieldMapping.get(fieldPath[i]);
-        }
+        }*/
 
         return (String) fieldMapping.get("type");
     }
@@ -443,23 +444,71 @@ public class SelectResultSet extends ResultSet {
         }
     }
 
+    /***
+     * 填充rows
+     * @param searchHits
+     * @return
+     */
     private List<DataRows.Row> populateRows(SearchHits searchHits) {
         List<DataRows.Row> rows = new ArrayList<>();
         Set<String> newKeys = new HashSet<>(head);
         for (SearchHit hit : searchHits) {
+            List<Map<String, Object>> newRowSources = new ArrayList<>();
             Map<String, Object> rowSource = hit.getSourceAsMap();
-            List<DataRows.Row> result = new ArrayList<>();
-            result.add(new DataRows.Row(rowSource));
 
-            if (!isJoinQuery()) { // Row already flatten in source in join. And join doesn't support nested fields for now.
-                rowSource = flatRow(head, rowSource);
-                rowSource.put("_score", hit.getScore());
-                result = flatNestedField(newKeys, rowSource, hit.getInnerHits());
+            for (Map.Entry<String, Object> e: rowSource.entrySet()){
+                //判断该entry的值是否为list。无法判断其它字段是否也是nested类型，所以只限制查询一列
+                if (rowSource.size() == 1 && e.getValue() instanceof List) {
+                    //强转该entry的值为List类型
+                    List<Map<String, Object>> items = (List<Map<String, Object>>)e.getValue();
+                    for (int i = 0; i < items.size(); i++) {
+                        //拿到List中的每一个元素
+                        Map<String, Object> item = items.get(i);
+                        Map<String, Object> newItem = new HashMap<>();
+                        //修改每个entry的key并添加到一个新的map里，相当于修改colume的name
+                        for (Map.Entry<String, Object> nooe:item.entrySet()){
+                            newItem.put(e.getKey() + "." + nooe.getKey(),nooe.getValue());
+                        }
+                        newItem.putAll(rowSource);//可选的，加入原有的字段
+                        newRowSources.add(newItem);//添加一行记录
+                    }
+                    this.size = this.size - 1 + ((List<Map>) e.getValue()).get(0).size();
+                    this.totalHits = this.totalHits - 1 + ((List<Map>) e.getValue()).get(0).size();
+                    break;
+                }else{
+                    break;
+                }
+            }
+            List<DataRows.Row> result = new ArrayList<>();
+            if (newRowSources == null || newRowSources.size() == 0){
+                result.add(new DataRows.Row(rowSource));
+                if (!isJoinQuery()) { // Row already flatten in source in join. And join doesn't
+                    // support nested fields for now.
+                    rowSource = flatRow(head, rowSource);
+                    rowSource.put("_score", hit.getScore());
+                    result = flatNestedField(newKeys, rowSource, hit.getInnerHits());
+                }
+                rows.addAll(result);
+            }else{
+                for (int i = 0; i < newRowSources.size(); i++) {
+                    result.add(new DataRows.Row(newRowSources.get(i)));
+                    if (!isJoinQuery()) { // Row already flatten in source in join. And join doesn't support nested fields for now.
+                        System.out.println("isNotJoinQuery");
+                        rowSource = flatRow(head, newRowSources.get(i));
+                        rowSource.put("_score", hit.getScore());
+                        result = flatNestedField(newKeys, newRowSources.get(i), hit.getInnerHits());
+                    }
+                    rows.addAll(result);
+                }
             }
 
-            rows.addAll(result);
-        }
+             /*
+             {car=[{model=SL, make=Saturn}, {model=Imprezza, make=Subaru}], name=Zach}
+             {car.model=SL,car.make=Saturn,name=Zach}
+             {car.model=Imprezza,car.make=Subaru,name=Zach}
+             */
 
+        }
         return rows;
     }
 
